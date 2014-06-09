@@ -548,3 +548,27 @@ class MaxHeaderSizeTest(AsyncHTTPTestCase):
         with ExpectLog(gen_log, "Unsatisfiable read"):
             response = self.fetch('/large')
         self.assertEqual(response.code, 599)
+
+
+class CancelActiveRequestTest(AsyncHTTPTestCase):
+    def get_app(self):
+        test_case = self
+        class LongRunning(RequestHandler):
+            @gen.coroutine
+            def get(self):
+                print("test")
+                yield gen.Task(test_case.io_loop.add_timeout, (test_case.io_loop.time() + 3))
+                print("test")
+                self.write('finished')
+                self.finish()
+                print("3")
+
+        return Application([('/', LongRunning)])
+
+    def test_cancelling_request(self):
+        # We can't use the self.fetch convience, because we need the future on hand for the cancel.
+        future = self.http_client.fetch(self.get_url('/'), callback=self.stop, connect_timeout=0.1, request_timeout=4)
+        cancelled = future.cancel()
+        self.assertEqual(cancelled, True)
+        response = self.wait()
+        self.assertEqual(response.code, 499)
